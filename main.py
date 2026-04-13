@@ -140,6 +140,8 @@ class Jarvis:
             self.wake_detector.enabled = False
 
         self.tts.speak("네, 형님.")
+        # TTS 종료 후 마이크 안정화 대기
+        time.sleep(0.3)
         self._listen_and_process()
 
     def _listen_and_process(self):
@@ -149,8 +151,8 @@ class Jarvis:
                 self._return_to_idle()
                 return
 
-        # 음성 인식
-        command = self.stt.listen(duration=8.0)
+        # 음성 인식 (최대 10초, 최소 2.5초 녹음 보장)
+        command = self.stt.listen(duration=10.0)
 
         if not command:
             if self.session.is_in_session and self.sm.state == State.LISTENING:
