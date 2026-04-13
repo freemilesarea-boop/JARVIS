@@ -86,7 +86,6 @@ def check_dependencies() -> bool:
         ("anthropic", "Anthropic SDK"),
         ("faster_whisper", "Faster Whisper"),
         ("edge_tts", "Edge TTS"),
-        ("pygame", "PyGame"),
         ("rich", "Rich"),
         ("numpy", "NumPy"),
         ("scipy", "SciPy"),

@@ -3,6 +3,11 @@
 edge-tts 사용 (완전 무료, 고품질 한국어 남성 음성)
 ko-KR-InJoonNeural = Microsoft의 자연스러운 한국어 남성 음성
 
+오디오 재생: subprocess 기반 (pygame 미사용)
+  - macOS: afplay
+  - Linux: mpg123 / aplay
+  - Windows: PowerShell Media.SoundPlayer
+
 고도화:
   - 인터럽트 지원 (재생 중 중단 가능)
   - 효과음 재생
@@ -10,22 +15,25 @@ ko-KR-InJoonNeural = Microsoft의 자연스러운 한국어 남성 음성
 """
 import asyncio
 import edge_tts
-import pygame
+import subprocess
+import platform
 import tempfile
 import os
 import re
+import signal
 import threading
 from typing import Optional, Callable
 from config.settings import TTS_VOICE, TTS_RATE, TTS_PITCH
 from utils.logger import log
 
+_SYSTEM = platform.system()
+
 
 class TTS:
     def __init__(self):
-        if not pygame.mixer.get_init():
-            pygame.mixer.init()
         self._speaking = False
         self._interrupted = False
+        self._process: Optional[subprocess.Popen] = None
         self._lock = threading.Lock()
 
     @property
@@ -60,10 +68,7 @@ class TTS:
         """재생 중단"""
         if self._speaking:
             self._interrupted = True
-            try:
-                pygame.mixer.music.stop()
-            except Exception:
-                pass
+            self._kill_player()
             log.info("TTS 인터럽트 - 재생 중단")
 
     def play_sound(self, sound_path: str):
@@ -71,10 +76,7 @@ class TTS:
         if not os.path.exists(sound_path):
             return
         try:
-            sound = pygame.mixer.Sound(sound_path)
-            sound.play()
-            while pygame.mixer.get_busy():
-                pygame.time.wait(50)
+            self._play_file(sound_path)
         except Exception as e:
             log.debug(f"효과음 재생 실패: {e}")
 
@@ -96,19 +98,76 @@ class TTS:
             if self._interrupted:
                 return
 
-            pygame.mixer.music.load(tmp_path)
-            pygame.mixer.music.play()
-            while pygame.mixer.music.get_busy():
-                if self._interrupted:
-                    pygame.mixer.music.stop()
-                    break
-                await asyncio.sleep(0.05)
+            self._play_file(tmp_path)
         finally:
-            try:
-                pygame.mixer.music.unload()
-            except Exception:
-                pass
             try:
                 os.unlink(tmp_path)
             except OSError:
                 pass
+
+    def _play_file(self, path: str):
+        """OS별 오디오 파일 재생 (블로킹, 인터럽트 가능)"""
+        try:
+            if _SYSTEM == "Darwin":
+                self._process = subprocess.Popen(
+                    ["afplay", path],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            elif _SYSTEM == "Linux":
+                if path.endswith(".mp3"):
+                    self._process = subprocess.Popen(
+                        ["mpg123", "-q", path],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+                else:
+                    self._process = subprocess.Popen(
+                        ["aplay", "-q", path],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+            elif _SYSTEM == "Windows":
+                # PowerShell로 재생
+                ps_cmd = (
+                    f'(New-Object Media.SoundPlayer "{path}").PlaySync()'
+                )
+                self._process = subprocess.Popen(
+                    ["powershell", "-Command", ps_cmd],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            else:
+                log.warning(f"지원하지 않는 OS: {_SYSTEM}")
+                return
+
+            # 재생 완료 대기 (인터럽트 체크)
+            while self._process.poll() is None:
+                if self._interrupted:
+                    self._kill_player()
+                    return
+                import time
+                time.sleep(0.05)
+
+        except FileNotFoundError as e:
+            log.error(
+                f"오디오 플레이어를 찾을 수 없습니다: {e}. "
+                f"Linux의 경우 'sudo apt install mpg123'을 실행해주세요."
+            )
+        except Exception as e:
+            log.error(f"오디오 재생 오류: {e}")
+        finally:
+            self._process = None
+
+    def _kill_player(self):
+        """재생 프로세스 강제 종료"""
+        with self._lock:
+            if self._process and self._process.poll() is None:
+                try:
+                    self._process.terminate()
+                    self._process.wait(timeout=1.0)
+                except Exception:
+                    try:
+                        self._process.kill()
+                    except Exception:
+                        pass
