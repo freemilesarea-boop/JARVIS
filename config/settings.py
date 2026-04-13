@@ -28,7 +28,7 @@ LISTENING_TIMEOUT = 8.0          # 음성 수신 최대 대기 시간(초)
 IDLE_POLL_INTERVAL = 0.05        # IDLE 상태 폴링 간격(초)
 
 # Whisper STT
-WHISPER_MODEL = "base"
+WHISPER_MODEL = os.getenv("WHISPER_MODEL", "base")  # tiny/base/small/medium
 WHISPER_LANGUAGE = "ko"
 
 # TTS
